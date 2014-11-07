@@ -225,28 +225,52 @@ class unary(object):
     Unary codec type tag.
     """
 
-def _unary_symbol_encoder(stream, symbol_):
-    return stream.write(symbol_ * [True] + [False], bool)
+def unary_encoder(stream, data):
+    if np.isscalar(data):
+        data = [data]
+    for datum in data:
+        stream.write(datum * [True] + [False])
 
-def _unary_symbol_decoder(stream):
-    count = 0
-    try:
-        while stream.read(bool) != False:
-            count += 1
-    except bitstream.ReadError:
-        raise bitstream.ReadError("invalid symbol") # TODO: print symbol ?
-    return count
+def unary_decoder(stream, n=None):
+    scalar = n is None
+    if scalar:
+        n = 1
+    data = []
+    for _ in range(n):
+        datum = 0
+        while stream.read(bool):
+            datum += 1
+        data.append(datum)
+    if scalar:
+        data = data[0]
+    return data
 
-_unary_encoder = stream_encoder(_unary_symbol_encoder)
-_unary_decoder = stream_decoder(_unary_symbol_decoder)
+bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
 
-bitstream.register(unary, reader=_unary_decoder, writer=_unary_encoder)
+## OBSOLETE --------------------------------------------------------------------
+#def _unary_symbol_encoder(stream, symbol_):
+#    return stream.write(symbol_ * [True] + [False], bool)
+#
+#def _unary_symbol_decoder(stream):
+#    count = 0
+#    try:
+#        while stream.read(bool) != False:
+#            count += 1
+#    except bitstream.ReadError:
+#        raise bitstream.ReadError("invalid symbol") # TODO: print symbol ?
+#    return count
+#
+#_unary_encoder = stream_encoder(_unary_symbol_encoder)
+#_unary_decoder = stream_decoder(_unary_symbol_decoder)
+#
+#bitstream.register(unary, reader=_unary_decoder, writer=_unary_encoder)
+#-------------------------------------------------------------------------------
 
 #
 # Rice Coding (a.k.a. Golomb-Power-of-Two)
 # ------------------------------------------------------------------------------
 # 
-# Golomb-Rice coders are a family of coders parametrized by an integer $n$ 
+# Golomb-Rice coders are a family of coders parametrized by an integer `n` 
 # known as the Golomb parameter. The $n$ less significant bits in the binary 
 # representation of a non-negative integer are coded first as such, then 
 # the remaining bits are coded with a unary coder. 
@@ -272,7 +296,7 @@ bitstream.register(unary, reader=_unary_decoder, writer=_unary_encoder)
 #
 class rice(object):
     """
-    Golomb-Rice codec parameter object
+    Golomb-Rice codec type tag & parameter object factory
     """
     def __init__(self, n, signed=False):
         """\
@@ -391,17 +415,6 @@ bitstream.register(rice, reader=rice_decoder, writer=rice_encoder)
 # Unit Tests
 # ------------------------------------------------------------------------------
 #
-def sort_dict(dict_):
-    """
-    Represent a dict whose keys have been sorted.
-    """
-    keys = sorted(dict_.keys())
-    output = "{"
-    for key in keys:
-        output += repr(key) + ": " + repr(dict_[key]) + ", " 
-    output = output[:-2] + "}"
-    print output
-
 def test_unary_coder():
     """
 Unary coder Tests:
@@ -451,6 +464,17 @@ Rice coder Tests:
     >>> stream.read(rice(2), 5)
     [5, 6, 7, 8, 9]
     """
+
+def sort_dict(dict_):
+    """
+    Represent a dict whose keys have been sorted.
+    """
+    keys = sorted(dict_.keys())
+    output = "{"
+    for key in keys:
+        output += repr(key) + ": " + repr(dict_[key]) + ", " 
+    output = output[:-2] + "}"
+    print output
 
 #def _test_huffman():
 #    """
