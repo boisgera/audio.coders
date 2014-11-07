@@ -236,11 +236,16 @@ def unary_decoder(stream, n=None):
     if scalar:
         n = 1
     data = []
-    for _ in range(n):
-        datum = 0
-        while stream.read(bool):
-            datum += 1
-        data.append(datum)
+    try:
+        snapshot = stream.save()
+        for _ in range(n):
+            datum = 0
+            while stream.read(bool):
+                datum += 1
+            data.append(datum)
+    except:
+        stream.restore(snapshot)
+        raise
     if scalar:
         data = data[0]
     return data
@@ -299,7 +304,7 @@ class rice(object):
     Golomb-Rice codec type tag & parameter object factory
     """
     def __init__(self, n, signed=False):
-        """\
+        """
 Arguments
 ---------
 
@@ -359,16 +364,21 @@ def rice_decoder(r):
         if n is None:
             n = 1
         data = []
-        for _ in range(n):
-            if r.signed and stream.read(bool):
-                sign = -1
-            else:
-                sign = 1
-            fixed_number = 0
-            for _ in range(r.n):
-                fixed_number = (fixed_number << 1) + int(stream.read(bool))
-            remain_number = 2 ** r.n * stream.read(unary)
-            data.append(sign * (fixed_number + remain_number))
+        try:
+            snapshot = stream.save()
+            for _ in range(n):
+                if r.signed and stream.read(bool):
+                    sign = -1
+                else:
+                    sign = 1
+                fixed_number = 0
+                for _ in range(r.n):
+                    fixed_number = (fixed_number << 1) + int(stream.read(bool))
+                remain_number = 2 ** r.n * stream.read(unary)
+                data.append(sign * (fixed_number + remain_number))
+        except:
+            stream.restore(snapshot)
+            raise
         if scalar:
             data = data[0]
         return data
@@ -436,6 +446,18 @@ Unary coder Tests:
     [4, 5, 6]
     >>> 
     """
+
+def test_unary_coder_exception():
+   """
+
+    >>> stream = bitstream.BitStream(8 * [True])
+    >>> stream.read(unary) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    ReadError: ...
+    >>> stream
+    11111111
+"""
 
 def test_rice_coder():
     """
