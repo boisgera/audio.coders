@@ -286,24 +286,25 @@ bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
 # The family of Golomb-Rice codecs are registered in the `bitstream` module 
 # under the type tag `rice` ; typical usage of the codec is therefore:
 #
-#     >>> BitStream(1, rice(3))
+#
+#     >>> BitStream(1, rice(3, signed=False))
 #     0010
-#     >>> BitStream(2, rice(3))
+#     >>> BitStream(2, rice(3, signed=False))
 #     0100
-#     >>> BitStream(4, rice(3))
+#     >>> BitStream(4, rice(3, signed=False))
 #     1000
-#     >>> BitStream(8, rice(3))
+#     >>> BitStream(8, rice(3, signed=False))
 #     00010
-#     >>> BitStream(16, rice(3))
+#     >>> BitStream(16, rice(3, signed=False))
 #     000110
-#     >>> BitStream(32, rice(3))
+#     >>> BitStream(32, rice(3, signed=False))
 #     00011110
 #
 class rice(object):
     """
     Golomb-Rice codec type tag & parameter object factory
     """
-    def __init__(self, n, signed=False):
+    def __init__(self, n, signed):
         """
 Arguments
 ---------
@@ -316,11 +317,11 @@ Arguments
         self.signed = signed
 
     @staticmethod
-    def from_frame(frame):
+    def from_frame(frame, signed):
         """\
 Return a rice parameter object from a sample frame.
  
-The method performs sign detection and (quasi-)optimal bit width selection.
+The method performs (quasi-)optimal bit width selection.
 
 **References:**
 ["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
@@ -328,7 +329,9 @@ The method performs sign detection and (quasi-)optimal bit width selection.
 [Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
 """
         frame = np.array(frame, ndmin=1, copy=False)
-        signed = any(frame < 0)
+        if not signed and any(frame < 0):
+            error = "rice cannot deal with negative integers when signed=False."
+            raise ValueError(error)
         mean_ = np.mean(np.abs(frame))
         golden_ratio = 0.5 * (1.0 + np.sqrt(5))
         theta = mean_ / (mean_ + 1.0)
@@ -462,27 +465,28 @@ def test_rice_coder():
     """
 Rice coder Tests:
 
+    >>> r2 = rice(2, signed=False)
     >>> stream = bitstream.BitStream()
-    >>> stream.write(0, rice(2))
+    >>> stream.write(0, r2)
     >>> stream
     000
-    >>> stream.write([1,2,3], rice(2))
+    >>> stream.write([1,2,3], r2)
     >>> stream
     000010100110
-    >>> stream.write([4,5,6], rice(2))
+    >>> stream.write([4,5,6], r2)
     >>> stream
     000010100110001001101010
-    >>> stream.write([7,8,9], rice(2))
+    >>> stream.write([7,8,9], r2)
     >>> stream
     00001010011000100110101011100011001110
 
-    >>> stream.read(rice(2))
+    >>> stream.read(r2)
     0
-    >>> stream.read(rice(2))
+    >>> stream.read(r2)
     1
-    >>> stream.read(rice(2), 3)
+    >>> stream.read(r2, 3)
     [2, 3, 4]
-    >>> stream.read(rice(2), 5)
+    >>> stream.read(r2, 5)
     [5, 6, 7, 8, 9]
     """
 
