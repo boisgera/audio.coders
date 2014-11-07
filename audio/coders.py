@@ -8,19 +8,17 @@ import os
 import sys
 
 # Third-Party Libraries
-from numpy import *; seterr(all="ignore")
+import numpy as np
 
 # Digital Audio Coding
-import bitstream; BitStream = bitstream.BitStream
+import bitstream
 import script
 
 #
 # Metadata
 # ------------------------------------------------------------------------------
 #
-__author__ = u"Sébastien Boisgérault <Sebastien.Boisgerault@mines-paristech.fr>"
-__version__ = "trunk"
-__license__ = "MIT License"
+from .about_coders import *
 
 #
 # Generic Stream Encoder/Decoder
@@ -429,50 +427,4 @@ Huffman coders tests:
     [0, 1, 2, 3]
     """
 
-def test(verbose=False):
-    """
-    Run the unit tests
-    """
-    import doctest
-    return doctest.testmod(verbose=verbose)
-
-#
-# Command-Line Interface
-# ------------------------------------------------------------------------------
-#
-
-def help():
-    """
-Return the following message:
-"""
-    message = \
-"""
-usage: 
-    python {filename} [OPTIONS]
-
-options: -h, --help ............................. display help message and exit,
-         -t, --test ............................. run the module self tests,
-         -v, --verbose .......................... verbose mode,
-"""
-    return message.format(filename=os.path.basename(__file__))
-
-help.__doc__ = "\nReturn the following message:\n\n" + \
-               "\n".join(4*" " + line for line in help().splitlines()) 
-
-def main(args, options):
-    if options.help:
-        print help()
-        sys.exit(0)
-    elif options.test:
-        verbose = bool(options.verbose)
-        test_results = test(verbose=verbose)
-        sys.exit(test_results.failed)
-    else:
-        print help()
-        sys.exit(1)
-
-if __name__ == "__main__":
-    options_list = "help verbose test"
-    options, args = script.parse(options_list)
-    main(args, options)
 
