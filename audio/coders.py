@@ -449,7 +449,6 @@ Unary coder Tests:
 
 def test_unary_coder_exception():
    """
-
     >>> stream = bitstream.BitStream(8 * [True])
     >>> stream.read(unary) # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
@@ -487,16 +486,29 @@ Rice coder Tests:
     [5, 6, 7, 8, 9]
     """
 
-def sort_dict(dict_):
-    """
-    Represent a dict whose keys have been sorted.
-    """
-    keys = sorted(dict_.keys())
-    output = "{"
-    for key in keys:
-        output += repr(key) + ": " + repr(dict_[key]) + ", " 
-    output = output[:-2] + "}"
-    print output
+
+def test_rice_coder_exception():
+   """
+    >>> stream = bitstream.BitStream(8 * [True])
+    >>> stream.read(rice(4, signed=False)) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    ReadError: ...
+    >>> stream
+    11111111
+"""
+
+
+#def sort_dict(dict_):
+#    """
+#    Represent a dict whose keys have been sorted.
+#    """
+#    keys = sorted(dict_.keys())
+#    output = "{"
+#    for key in keys:
+#        output += repr(key) + ": " + repr(dict_[key]) + ", " 
+#    output = output[:-2] + "}"
+#    print output
 
 #def _test_huffman():
 #    """
