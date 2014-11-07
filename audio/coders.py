@@ -4,15 +4,13 @@ Variable-Length Binary Codes
 """
 
 # Python 2.7 Standard Library
-import os
-import sys
+pass
 
 # Third-Party Libraries
-import numpy as np
+import numpy as np; np.seterr(all="ignore")
 
 # Digital Audio Coding
 import bitstream
-import script
 
 #
 # Metadata
@@ -274,76 +272,120 @@ bitstream.register(unary, reader=_unary_decoder, writer=_unary_encoder)
 #
 class rice(object):
     """
-    Rice codec type tag
+    Golomb-Rice codec parameter object
     """
     def __init__(self, n, signed=False):
-        """
-        Arguments
-        ---------
+        """\
+Arguments
+---------
 
-          - `n`: the Golomb parameter.
+  - `n`: the number of bits used for fixed-width encoding
 
-          - `signed`: `True` if the integer sign shall be encoded, `False`
-            otherwise (the default). 
-        """
+  - `signed`: `True` if the integer sign shall be encoded, `False` otherwise. 
+"""
         self.n = n
         self.signed = signed
 
     @staticmethod
-    def select_parameter(mean):
-        """
-        Golomb Power-of-Two optimal parameter selection.
+    def from_frame(frame):
+        """\
+Return a rice parameter object from a sample frame.
+ 
+The method performs sign detection and (quasi-)optimal bit width selection.
 
-        This function compute from to the average value `mean` of a sequence of
-        integers the corresponding almost optimal value of the Golomb parameter 
-        `n`.
+**References:**
+["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
 
-        **References:**
-        ["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
-
-        [Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
-        """
-        golden_ratio = 0.5 * (1.0 + sqrt(5))
-        theta = mean / (mean + 1.0)
-        log_ratio = log(golden_ratio - 1.0) / log(theta)
-        return int(maximum(0, 1 + floor(log2(log_ratio))))
+[Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
+"""
+        frame = np.array(frame, ndmin=1, copy=False)
+        signed = any(frame < 0)
+        mean_ = np.mean(np.abs(frame))
+        golden_ratio = 0.5 * (1.0 + np.sqrt(5))
+        theta = mean_ / (mean_ + 1.0)
+        log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
+        n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
+        return rice(n, signed=signed)
 
     def __repr__(self):
-        return "rice({0}, {1})".format(self.n, self.signed)
+        return "rice({0}, signed={1})".format(self.n, self.signed)
 
     __str__ = __repr__
 
-def _rice_symbol_encoder(options):
-    def encoder(stream, symbol):
-        if options.signed:
-            stream.write(symbol < 0)
-        symbol = abs(symbol)
-        remain, fixed = divmod(symbol, 2 ** options.n)
-        fixed_bits = []
-        for _ in range(options.n):
-            fixed_bits.insert(0, bool(fixed % 2))
-            fixed = fixed >> 1
-        stream.write(fixed_bits)
-        stream.write(remain, unary)
-    return encoder
+def rice_encoder(r):
+    def _rice_encoder(stream, data):
+        if np.isscalar(data):
+            data = [data]
+        for datum in data:
+            if r.signed:
+                stream.write(datum < 0)
+            datum = abs(datum)
+            remain, fixed = divmod(datum, 2 ** r.n)
+            fixed_bits = []
+            for _ in range(r.n):
+                fixed_bits.insert(0, bool(fixed % 2))
+                fixed = fixed >> 1
+            stream.write(fixed_bits)
+            stream.write(remain, unary)  
+    return _rice_encoder
 
-def _rice_symbol_decoder(options):
-    def decoder(stream):
-        if options.signed and stream.read(bool):
-            sign = -1
-        else:
-            sign = 1
-        fixed_number = 0
-        n = int(options.n)
+def rice_decoder(r):
+    def _rice_decoder(stream, n=None):
+        scalar = n is None
+        if n is None:
+            n = 1
+        data = []
         for _ in range(n):
-            fixed_number = (fixed_number << 1) + int(stream.read(bool))
-        remain_number = 2 ** n * stream.read(unary)
-        return sign * (fixed_number + remain_number)
-    return decoder
+            if r.signed and stream.read(bool):
+                sign = -1
+            else:
+                sign = 1
+            fixed_number = 0
+            for _ in range(r.n):
+                fixed_number = (fixed_number << 1) + int(stream.read(bool))
+            remain_number = 2 ** r.n * stream.read(unary)
+            data.append(sign * (fixed_number + remain_number))
+        if scalar:
+            data = data[0]
+        return data
+    return _rice_decoder
 
-_rice_encoder = lambda r: stream_encoder(_rice_symbol_encoder(r))
-_rice_decoder = lambda r: stream_decoder(_rice_symbol_decoder(r))
-bitstream.register(rice, reader=_rice_decoder, writer=_rice_encoder)
+bitstream.register(rice, reader=rice_decoder, writer=rice_encoder)
+
+# OBSOLETE ---------------------------------------------------------------------
+#
+#def _rice_symbol_encoder(options):
+#    def encoder(stream, symbol):
+#        if options.signed:
+#            stream.write(symbol < 0)
+#        symbol = abs(symbol)
+#        remain, fixed = divmod(symbol, 2 ** options.n)
+#        fixed_bits = []
+#        for _ in range(options.n):
+#            fixed_bits.insert(0, bool(fixed % 2))
+#            fixed = fixed >> 1
+#        stream.write(fixed_bits)
+#        stream.write(remain, unary)
+#    return encoder
+#
+#def _rice_symbol_decoder(options):
+#    def decoder(stream):
+#        if options.signed and stream.read(bool):
+#            sign = -1
+#        else:
+#            sign = 1
+#        fixed_number = 0
+#        n = int(options.n)
+#        for _ in range(n):
+#            fixed_number = (fixed_number << 1) + int(stream.read(bool))
+#        remain_number = 2 ** n * stream.read(unary)
+#        return sign * (fixed_number + remain_number)
+#    return decoder
+#
+#_rice_encoder = lambda r: stream_encoder(_rice_symbol_encoder(r))
+#_rice_decoder = lambda r: stream_decoder(_rice_symbol_decoder(r))
+#bitstream.register(rice, reader=_rice_decoder, writer=_rice_encoder)
+# ------------------------------------------------------------------------------
 
 #
 # Unit Tests
@@ -364,7 +406,7 @@ def test_unary_coder():
     """
 Unary coder Tests:
 
-    >>> stream = BitStream()
+    >>> stream = bitstream.BitStream()
     >>> stream.write(0, unary)
     >>> stream.write(1, unary)
     >>> stream.write([2, 3, 4, 5, 6], unary)
@@ -386,7 +428,7 @@ def test_rice_coder():
     """
 Rice coder Tests:
 
-    >>> stream = BitStream()
+    >>> stream = bitstream.BitStream()
     >>> stream.write(0, rice(2))
     >>> stream
     000
@@ -410,21 +452,21 @@ Rice coder Tests:
     [5, 6, 7, 8, 9]
     """
 
-def test_huffman():
-    """
-Huffman coders tests:
+#def _test_huffman():
+#    """
+#Huffman coders tests:
 
-    >>> alphabet = {0: 1.0, 1: 0.5, 2: 0.25, 3: 0.125}
-    >>> huffman_ = huffman(alphabet)
-    >>> huffman_.tree
-    ([([([(3, 0.125), (2, 0.25)], 0.375), (1, 0.5)], 0.875), (0, 1.0)], 1.875)
-    >>> sort_dict(huffman_.table)
-    {0: 1, 1: 01, 2: 001, 3: 000}
-    >>> stream = BitStream([0, 1, 2, 3], huffman_)
-    >>> stream
-    101001000
-    >>> stream.read(huffman_, 4)
-    [0, 1, 2, 3]
-    """
+#    >>> alphabet = {0: 1.0, 1: 0.5, 2: 0.25, 3: 0.125}
+#    >>> huffman_ = huffman(alphabet)
+#    >>> huffman_.tree
+#    ([([([(3, 0.125), (2, 0.25)], 0.375), (1, 0.5)], 0.875), (0, 1.0)], 1.875)
+#    >>> sort_dict(huffman_.table)
+#    {0: 1, 1: 01, 2: 001, 3: 000}
+#    >>> stream = BitStream([0, 1, 2, 3], huffman_)
+#    >>> stream
+#    101001000
+#    >>> stream.read(huffman_, 4)
+#    [0, 1, 2, 3]
+#    """
 
 
