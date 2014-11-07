@@ -13,8 +13,8 @@ import audio.coders
 #
 
 # support for `python setup.py test`:
-suite = doctest.DocTestSuite(audio.frames)
+suite = doctest.DocTestSuite(audio.coders)
 
 if __name__ == "__main__":
-    doctest.testmod(audio.frames)
+    doctest.testmod(audio.coders)
 
