@@ -7,7 +7,7 @@ Variable-Length Binary Codes
 pass
 
 # Third-Party Libraries
-import numpy as np; np.seterr(all="ignore")
+import numpy as np
 
 # Digital Audio Coding
 import bitstream
@@ -299,10 +299,41 @@ bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
 #     000110
 #     >>> BitStream(32, rice(3, signed=False))
 #     00011110
-#
+
+# adapted from
+# <http://afni.nimh.nih.gov/pub/dist/src/pkundu/meica.libs/nibabel/casting.py>
+# (didn't find any license information (??))
+def exact_abs(array_like):
+    """A `nump.abs` replacement that "just works" with signed integers.
+
+    >>> import numpy
+    >>> integer = numpy.int16(-2**15)
+    >>> integer
+    -32768
+
+    >>> numpy.abs(integer)
+    -32768
+    >>> exact_abs(integer)
+    32768
+"""
+    scalar = np.isscalar(array_like)
+    array = np.array(array_like, copy=True)
+    dtype_ = array.dtype
+    if dtype_.kind == "i":
+        unsigned_dtype = np.dtype(dtype_.str.replace("i", "u"))
+        out = array.astype(unsigned_dtype)
+        patch = np.array(array < 0)
+        out[patch] = - array[patch]
+        if scalar:
+            out = out[()]
+        return out
+    else: # "u", "O", "f", "c", etc.
+        return np.abs(array)
+
+
 class rice(object):
     """
-    Golomb-Rice codec type tag & parameter object factory
+    Golomb-Rice Codec Information Type
     """
     def __init__(self, n, signed):
         """
@@ -319,9 +350,16 @@ Arguments
     @staticmethod
     def from_frame(frame, signed):
         """\
-Return a rice parameter object from a sample frame.
+Return a rice codec info from a sample frame.
  
 The method performs (quasi-)optimal bit width selection.
+
+Arguments
+---------
+
+  - `frame`: a sequence of integers,
+
+  - `signed`: `True` if the integer sign shall be encoded, `False` otherwise. 
 
 **References:**
 ["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
@@ -329,14 +367,18 @@ The method performs (quasi-)optimal bit width selection.
 [Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
 """
         frame = np.array(frame, ndmin=1, copy=False)
-        if not signed and any(frame < 0):
-            error = "rice cannot deal with negative integers when signed=False."
-            raise ValueError(error)
-        mean_ = np.mean(np.abs(frame))
-        golden_ratio = 0.5 * (1.0 + np.sqrt(5))
-        theta = mean_ / (mean_ + 1.0)
-        log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
-        n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
+        try:
+            np_settings = np.seterr() #all="ignore") # need some control here.
+            mean_ = np.mean(exact_abs(frame))
+            golden_ratio = 0.5 * (1.0 + np.sqrt(5))
+            if mean_ < golden_ratio:
+                n = 0
+            else:
+                theta = mean_ / (mean_ + 1.0)
+                log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
+                n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
+        finally:
+            np.seterr(**np_settings)
         return rice(n, signed=signed)
 
     def __repr__(self):
