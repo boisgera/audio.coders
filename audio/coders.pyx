@@ -1,4 +1,5 @@
 # coding: utf-8
+# cython: profile = True
 """
 Variable-Length Binary Codes
 """
@@ -8,6 +9,7 @@ pass
 
 # Third-Party Libraries
 import numpy as np
+cimport numpy as np
 
 # Digital Audio Coding
 import bitstream
@@ -335,7 +337,7 @@ class rice(object):
     """
     Golomb-Rice Codec Information Type
     """
-    def __init__(self, n, signed):
+    def __init__(self, n, **kwargs):
         """
 Arguments
 ---------
@@ -345,10 +347,10 @@ Arguments
   - `signed`: `True` if the integer sign shall be encoded, `False` otherwise. 
 """
         self.n = n
-        self.signed = signed
+        self.signed = kwargs.get("signed")
 
     @staticmethod
-    def from_frame(frame, signed):
+    def from_frame(frame, **kwargs):
         """\
 Return a rice codec info from a sample frame.
  
@@ -379,7 +381,7 @@ Arguments
                 n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
         finally:
             np.seterr(**np_settings)
-        return rice(n, signed=signed)
+        return rice(n, signed=kwargs.get("signed"))
 
     def __repr__(self):
         return "rice({0}, signed={1})".format(self.n, self.signed)
@@ -388,8 +390,8 @@ Arguments
 
 def rice_encoder(r):
     def _rice_encoder(stream, data):
-        data = np.array(data, ndmin=1, copy=False)
-        for datum in data:
+        cdef object[:] data_ = np.array(data, ndmin=1, copy=False, dtype=object)
+        for datum in data_:
             if r.signed:
                 stream.write(datum < 0)
             datum = abs(datum) #### mmmm, may overflow, right ?. Is that tested ?

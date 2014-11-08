@@ -20,6 +20,9 @@ except ImportError:
 # Numpy
 import numpy
 
+# Cython
+from Cython.Build import cythonize
+
 def local(path):
     return os.path.join(os.path.dirname(__file__), path)
 
@@ -44,7 +47,8 @@ import about_coders
 
 info = dict(
   metadata     = about.get_metadata(about_coders),
-  code         = dict(packages=setuptools.find_packages()),
+  code         = dict(packages=setuptools.find_packages(),
+                      ext_modules=cythonize("audio/coders.pyx", include_dirs=[numpy.get_include()])),
   data         = {},
   requirements = dict(install_requires="bitstream"),
   scripts      = {},
