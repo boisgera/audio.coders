@@ -388,18 +388,18 @@ Arguments
 
 def rice_encoder(r):
     def _rice_encoder(stream, data):
-        if np.isscalar(data):
-            data = [data]
+        data = np.array(data, ndmin=1, copy=False)
         for datum in data:
             if r.signed:
                 stream.write(datum < 0)
-            datum = abs(datum)
+            datum = abs(datum) #### mmmm, may overflow, right ?. Is that tested ?
+            # yeah, but indirectly in audio.shrink. How can it work ? 
             remain, fixed = divmod(datum, 2 ** r.n)
             fixed_bits = []
             for _ in range(r.n):
-                fixed_bits.insert(0, bool(fixed % 2))
+                fixed_bits.insert(0, bool(fixed % 2)) 
                 fixed = fixed >> 1
-            stream.write(fixed_bits)
+            stream.write(fixed_bits, bool)
             stream.write(remain, unary)  
     return _rice_encoder
 
