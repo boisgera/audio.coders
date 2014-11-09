@@ -20,8 +20,6 @@ except ImportError:
 # Numpy
 import numpy
 
-# Cython
-from Cython.Build import cythonize
 
 def local(path):
     return os.path.join(os.path.dirname(__file__), path)
@@ -41,14 +39,80 @@ except pkg_resources.DistributionNotFound:
     raise ImportError(error.format(req=" ".join(setup_requires)))
 import about
 
-# This Package
+# This Package (Metadata only)
 sys.path.insert(1, local("audio"))
 import about_coders
 
+#
+# CYTHON and REST options management (from setup.cfg)
+# ------------------------------------------------------------------------------
+#
+CYTHON = None
+REST = None
+
+setuptools.Distribution.global_options.extend([
+    ("cython", None, "compile Cython files"),
+    ("rest"  , None, "generate reST documentation")
+])
+
+def trueish(value):
+    if not isinstance(value, str):
+        return bool(value)
+    else:
+        value = value.lower()
+        if value in ("y", "yes", "t", "true", "on", "1"):
+            return True
+        elif value in ("", "n", "no", "f", "false", "off", "0"):
+            return False
+        else:
+            raise TypeError("invalid bool value {0!r}, use 'true' or 'false'.")
+
+def import_CYTHON_REST_from_setup_cfg():
+    global CYTHON, REST
+    if os.path.isfile("setup.cfg"):
+        parser = ConfigParser.ConfigParser()
+        parser.read("setup.cfg")
+        try:
+            CYTHON = trueish(parser.get("global", "cython"))
+        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+            pass
+        try:
+            REST = trueish(parser.get("global", "rest"))
+        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+            pass
+
+import_CYTHON_REST_from_setup_cfg()
+
+#
+# Custom Developer Commands
+# ------------------------------------------------------------------------------
+#
+def make_extension(name):
+    include = dict(include_dirs=[numpy.get_include()])
+    pyx_file = name.replace(".", "/") + ".pyx"
+    c_file   = name.replace(".", "/") + ".c"
+    if CYTHON:
+        pkg_resources.require("Cython")
+        import Cython
+        from Cython.Build import cythonize
+        return cythonize(pyx_file, **include)
+    else:
+        if os.path.exists(c_file):
+            return [setuptools.Extension(name, 
+                                         sources=[c_file],
+                                         **include)]
+        else:
+            error = "file not found: {0!r}".format(c_file)
+            raise IOError(error)
+
+#
+# Setup
+# ------------------------------------------------------------------------------
+#
 info = dict(
   metadata     = about.get_metadata(about_coders),
   code         = dict(packages=setuptools.find_packages(),
-                      ext_modules=cythonize("audio/coders.pyx", include_dirs=[numpy.get_include()])),
+                      ext_modules=make_extension("audio.coders")),
   data         = {},
   requirements = dict(install_requires="bitstream"),
   scripts      = {},

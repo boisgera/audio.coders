@@ -1,4 +1,5 @@
 include test.py
+include audio.coders.c
 recursive-include .lib *
 recursive-exclude .lib *.pyc
 
