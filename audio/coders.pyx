@@ -80,43 +80,6 @@ bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
 # Rice Coding (a.k.a. Golomb-Rice or Golomb-Power-of-Two)
 # ------------------------------------------------------------------------------
 # 
-
-# The code below is adapted from
-# <http://afni.nimh.nih.gov/pub/dist/src/pkundu/meica.libs/nibabel/casting.py>.
-# I didn't find any license information about this project ...
-cpdef exact_abs(array_like):
-    """
-    A `numpy.abs` replacement that "just works" with signed integers.
-
-        >>> import numpy as np
-        >>> int16 = np.int16(-2**15)
-        >>> int16
-        -32768
-        >>> int16s = np.arange(-2**15, 2**15, dtype=np.int16)
-
-        >>> np.abs(int16)
-        -32768
-        >>> np.abs(int(int16))
-        32768
-        >>> exact_abs(int16)
-        32768
-        >>> all(exact_abs(int16s) == [np.abs(int(i)) for i in int16s])
-        True
-    """
-    scalar = np.isscalar(array_like)
-    array = np.array(array_like, copy=False)
-    dtype_ = array.dtype
-    if dtype_.kind == "i":
-        unsigned_dtype = np.dtype(dtype_.str.replace("i", "u"))
-        output= array.astype(unsigned_dtype)
-        patch = np.array(array < 0)
-        output[patch] = - array[patch]
-        if scalar:
-            output = output[()]
-    else: # "u", "O", "f", "c", etc., fallback to standard behavior.
-        output = np.abs(array)
-    return output
-
 class rice(object):
     """
     Golomb-Rice Coding Tag
@@ -181,10 +144,12 @@ class rice(object):
 
         [Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
         """
-        frame = np.array(frame, ndmin=1, copy=False)
+        # The cast to object yields a correct computation of abs.
+        # (otherwise, we have for example abs(int16(-2**15)) == -2**15.
+        frame = np.array(frame, ndmin=1, copy=False, dtype=object)
         try:
             np_settings = np.seterr() #all="ignore") # need some control here.
-            mean_ = np.mean(exact_abs(frame))
+            mean_ = np.mean(np.abs(frame))
             golden_ratio = 0.5 * (1.0 + np.sqrt(5))
             if mean_ < golden_ratio:
                 n = 0
@@ -213,9 +178,7 @@ def rice_encoder(r):
         for datum in data_:
             if r.signed:
                 stream.write(datum < 0)
-            datum = abs(datum) #### mmmm, may overflow, right ?. Is that tested ?
-            # yeah, but indirectly in audio.shrink. How can it work ? Are we
-            # lucky and the wrong number generate magically right numbers below ?
+            datum = abs(datum) # exact (datum is a Python int).
             remain, fixed = divmod(datum, 2 ** r.n)
             fixed_bits = []
             for _ in range(r.n):
@@ -329,7 +292,6 @@ Rice coder Tests:
     [5, 6, 7, 8, 9]
     """
 
-
 def test_rice_coder_exception():
    """
     >>> import bitstream
@@ -342,12 +304,19 @@ def test_rice_coder_exception():
     11111111
 """
 
+def test_rice_coder_abs_overflow():
+    """
+    >>> import numpy as np
+    >>> from bitstream import BitStream
+    >>> BitStream(np.int16(-2**15), rice(16, signed=True))
+    110000000000000000
+"""
 
 
 
 
 
-
+################################################################################
 # ------------------------------------------------------------------------------
 # "Sandbox" section, not considered a part of the public API
 # ------------------------------------------------------------------------------
