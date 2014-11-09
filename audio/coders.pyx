@@ -21,6 +21,337 @@ import bitstream
 from .about_coders import *
 
 #
+# Unary Coding
+# ------------------------------------------------------------------------------
+# 
+class unary(object):
+    """Unary coding tag.
+
+The unary scheme represents an integer `n` as `n` ones followed by one zero. 
+The basic usage is:
+
+    >>> import bitstream
+    >>> stream = bitstream.BitStream()
+    >>> stream.write([0, 1, 2, 3], unary)
+    >>> stream
+    0101101110
+    >>> stream.read(unary, 4)
+    [0, 1, 2, 3]
+"""
+
+def unary_encoder(stream, data):
+    if np.isscalar(data):
+        data = [data]
+    for datum in data:
+        stream.write(datum * [True] + [False])
+
+# **Remark:** the following "optimized" code for `unary_encoder` is 3x slower 
+# in realistic use cases (`audio.shrink`).
+#
+#    cdef object[:] data_ = np.array(data, ndmin=1, copy=True, dtype=object)
+#    cdef unsigned long datum, _
+#    for datum in data_:
+#        for _ in range(datum):
+#            stream.write(True)
+#        stream.write(False)
+
+def unary_decoder(stream, n=None):
+    scalar = n is None
+    if scalar:
+        n = 1
+    data = []
+    try:
+        snapshot = stream.save()
+        for _ in range(n):
+            datum = 0
+            while stream.read(bool):
+                datum += 1
+            data.append(datum)
+    except:
+        stream.restore(snapshot)
+        raise
+    if scalar:
+        data = data[0]
+    return data
+
+bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
+
+#
+# Rice Coding (a.k.a. Golomb-Rice or Golomb-Power-of-Two)
+# ------------------------------------------------------------------------------
+# 
+
+# The code below is adapted from
+# <http://afni.nimh.nih.gov/pub/dist/src/pkundu/meica.libs/nibabel/casting.py>.
+# I didn't find any license information about this project ...
+cpdef exact_abs(array_like):
+    """
+    A `numpy.abs` replacement that "just works" with signed integers.
+
+        >>> import numpy as np
+        >>> int16 = np.int16(-2**15)
+        >>> int16
+        -32768
+        >>> int16s = np.arange(-2**15, 2**15, dtype=np.int16)
+
+        >>> np.abs(int16)
+        -32768
+        >>> np.abs(int(int16))
+        32768
+        >>> exact_abs(int16)
+        32768
+        >>> all(exact_abs(int16s) == [np.abs(int(i)) for i in int16s])
+        True
+    """
+    scalar = np.isscalar(array_like)
+    array = np.array(array_like, copy=False)
+    dtype_ = array.dtype
+    if dtype_.kind == "i":
+        unsigned_dtype = np.dtype(dtype_.str.replace("i", "u"))
+        output= array.astype(unsigned_dtype)
+        patch = np.array(array < 0)
+        output[patch] = - array[patch]
+        if scalar:
+            output = output[()]
+    else: # "u", "O", "f", "c", etc., fallback to standard behavior.
+        output = np.abs(array)
+    return output
+
+class rice(object):
+    """
+    Golomb-Rice Coding Tag
+
+    The unsigned Golomb-Rice scheme with fixed-width `n` represents a
+    non-negative integer `i` as the code for `i % 2**n` in a fixed-width
+    scheme of width `n`, followed by a unary coding of `i >> n`.
+    The signed version of the scheme encodes the sign of the integer `i`
+    first, then the integer `abs(i)` with the unsigned scheme.
+
+    The basic usage is:
+
+    >>> from bitstream import BitStream
+    >>> ur2 = rice(2, signed=False)
+    >>> stream = BitStream([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ur2)
+    >>> stream
+    00001010011000100110101011100011001110
+    >>> stream.read(ur2, 10)
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    >>> sr2 = rice(2, signed=True)
+    >>> stream = BitStream([0, -1, 1, -2, 2, -3, 3, -4, 4], sr2)
+    >>> stream
+    00001010001011000100111001101001000010
+    >>> stream.read(sr2, 9)
+    [0, -1, 1, -2, 2, -3, 3, -4, 4]
+    """
+
+    def __init__(self, n, *args, **kwargs):
+        """
+        Arguments
+        ---------
+
+          - `n`: the number of bits used for fixed-width encoding
+
+          - `signed`: `True` if the integer sign shall be encoded, 
+            `False` otherwise. 
+        """
+        self.n = n
+        # workaround: in Cython, `signed` is a keyword.
+        if args:
+            self.signed = args[0]
+        else:
+            self.signed = kwargs["signed"]
+
+    @staticmethod
+    def from_frame(frame, *args, **kwargs):
+        """
+        Return a rice tag instance from a sample frame.
+ 
+        The method performs (quasi-)optimal bit width selection.
+
+        Arguments
+        ---------
+
+          - `frame`: a sequence of integers,
+
+          - `signed`: `True` if the integer sign shall be encoded, 
+            `False` otherwise. 
+
+        **References:**
+        ["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
+
+        [Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
+        """
+        frame = np.array(frame, ndmin=1, copy=False)
+        try:
+            np_settings = np.seterr() #all="ignore") # need some control here.
+            mean_ = np.mean(exact_abs(frame))
+            golden_ratio = 0.5 * (1.0 + np.sqrt(5))
+            if mean_ < golden_ratio:
+                n = 0
+            else:
+                theta = mean_ / (mean_ + 1.0)
+                log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
+                n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
+        finally:
+            np.seterr(**np_settings)
+        # Workaround: in Cython, `signed` is a keyword.
+        if args:
+            _signed = args[0]
+        else:
+            _signed = kwargs["signed"]
+        return rice(n, signed=_signed)
+
+    def __repr__(self):
+        return "rice({0}, signed={1})".format(self.n, self.signed)
+
+    __str__ = __repr__
+
+
+def rice_encoder(r):
+    def _rice_encoder(stream, data):
+        cdef object[:] data_ = np.array(data, ndmin=1, copy=False, dtype=object)
+        for datum in data_:
+            if r.signed:
+                stream.write(datum < 0)
+            datum = abs(datum) #### mmmm, may overflow, right ?. Is that tested ?
+            # yeah, but indirectly in audio.shrink. How can it work ? Are we
+            # lucky and the wrong number generate magically right numbers below ?
+            remain, fixed = divmod(datum, 2 ** r.n)
+            fixed_bits = []
+            for _ in range(r.n):
+                fixed_bits.insert(0, bool(fixed % 2)) 
+                fixed = fixed >> 1
+            stream.write(fixed_bits, bool)
+            stream.write(remain, unary)  
+    return _rice_encoder
+
+def rice_decoder(r):
+    def _rice_decoder(stream, n=None):
+        scalar = n is None
+        if n is None:
+            n = 1
+        data = []
+        try:
+            snapshot = stream.save()
+            for _ in range(n):
+                if r.signed and stream.read(bool):
+                    sign = -1
+                else:
+                    sign = 1
+                fixed_number = 0
+                for _ in range(r.n):
+                    fixed_number = (fixed_number << 1) + int(stream.read(bool))
+                remain_number = 2 ** r.n * stream.read(unary)
+                data.append(sign * (fixed_number + remain_number))
+        except:
+            stream.restore(snapshot)
+            raise
+        if scalar:
+            data = data[0]
+        return data
+
+    return _rice_decoder
+
+# **Remark:** the obvious Cython optimization (working with an array of
+# objects `data` instead of a list) results only in <5% performance gain.
+# Moreover, this is with a change of the API, the perf. is probably worse
+# than the original if we have to return the result as a list, hence it's
+# not worth it.
+
+bitstream.register(rice, reader=rice_decoder, writer=rice_encoder)
+
+#
+# Unit Tests
+# ------------------------------------------------------------------------------
+#
+def test_unary_coder():
+    """
+Unary coder Tests:
+
+    >>> import bitstream
+    >>> stream = bitstream.BitStream()
+    >>> stream.write(0, unary)
+    >>> stream.write(1, unary)
+    >>> stream.write([2, 3, 4, 5, 6], unary)
+    >>> stream
+    0101101110111101111101111110
+
+    >>> stream.read(unary)
+    0
+    >>> stream.read(unary)
+    1
+    >>> stream.read(unary, 2)
+    [2, 3]
+    >>> stream.read(unary, 3)
+    [4, 5, 6]
+    >>> 
+    """
+
+def test_unary_coder_exception():
+   """
+    >>> import bitstream
+    >>> stream = bitstream.BitStream(8 * [True])
+    >>> stream.read(unary) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    ReadError: ...
+    >>> stream
+    11111111
+"""
+
+def test_rice_coder():
+    """
+Rice coder Tests:
+
+    >>> import bitstream
+    >>> r2 = rice(2, signed=False)
+    >>> stream = bitstream.BitStream()
+    >>> stream.write(0, r2)
+    >>> stream
+    000
+    >>> stream.write([1,2,3], r2)
+    >>> stream
+    000010100110
+    >>> stream.write([4,5,6], r2)
+    >>> stream
+    000010100110001001101010
+    >>> stream.write([7,8,9], r2)
+    >>> stream
+    00001010011000100110101011100011001110
+
+    >>> stream.read(r2)
+    0
+    >>> stream.read(r2)
+    1
+    >>> stream.read(r2, 3)
+    [2, 3, 4]
+    >>> stream.read(r2, 5)
+    [5, 6, 7, 8, 9]
+    """
+
+
+def test_rice_coder_exception():
+   """
+    >>> import bitstream
+    >>> stream = bitstream.BitStream(8 * [True])
+    >>> stream.read(rice(4, signed=False)) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    ReadError: ...
+    >>> stream
+    11111111
+"""
+
+
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# "Sandbox" section, not considered a part of the public API
+# ------------------------------------------------------------------------------
+#
 # Generic Stream Encoder/Decoder
 # ------------------------------------------------------------------------------
 #
@@ -204,348 +535,6 @@ bitstream.register(huffman, reader=lambda h: h.decoder,
                             writer=lambda h: h.encoder)
    
 
-#
-# Unary Coding
-# ------------------------------------------------------------------------------
-# 
-# A unary coder associates to a non-negative integer `n` a bitstream made of
-# `n` ones followed by a single zero. 
-#
-# A unary codec pair is registered in the `bitstream` module under the type 
-# tag `unary`, therefore its basic usage is:
-#
-#     >>> stream = Bitstream()
-#     >>> stream.write([0, 1, 2, 3], unary)
-#     >>> stream
-#     0101101110
-#     >>> stream.read(unary, 4)
-#     [0, 1, 2, 3]
-#
-
-class unary(object):
-    """
-    Unary codec type tag.
-    """
-
-def unary_encoder(stream, data):
-    if np.isscalar(data):
-        data = [data]
-    for datum in data:
-        stream.write(datum * [True] + [False])
-
-def unary_decoder(stream, n=None):
-    scalar = n is None
-    if scalar:
-        n = 1
-    data = []
-    try:
-        snapshot = stream.save()
-        for _ in range(n):
-            datum = 0
-            while stream.read(bool):
-                datum += 1
-            data.append(datum)
-    except:
-        stream.restore(snapshot)
-        raise
-    if scalar:
-        data = data[0]
-    return data
-
-bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
-
-## OBSOLETE --------------------------------------------------------------------
-#def _unary_symbol_encoder(stream, symbol_):
-#    return stream.write(symbol_ * [True] + [False], bool)
-#
-#def _unary_symbol_decoder(stream):
-#    count = 0
-#    try:
-#        while stream.read(bool) != False:
-#            count += 1
-#    except bitstream.ReadError:
-#        raise bitstream.ReadError("invalid symbol") # TODO: print symbol ?
-#    return count
-#
-#_unary_encoder = stream_encoder(_unary_symbol_encoder)
-#_unary_decoder = stream_decoder(_unary_symbol_decoder)
-#
-#bitstream.register(unary, reader=_unary_decoder, writer=_unary_encoder)
-#-------------------------------------------------------------------------------
-
-#
-# Rice Coding (a.k.a. Golomb-Power-of-Two)
-# ------------------------------------------------------------------------------
-# 
-# Golomb-Rice coders are a family of coders parametrized by an integer `n` 
-# known as the Golomb parameter. The $n$ less significant bits in the binary 
-# representation of a non-negative integer are coded first as such, then 
-# the remaining bits are coded with a unary coder. 
-# The Rice coder is usually defined for signed integers as the sequence of 
-# sign as a boolean followed by the Rice coding of the absolute value of the 
-# integer.
-# 
-# The family of Golomb-Rice codecs are registered in the `bitstream` module 
-# under the type tag `rice` ; typical usage of the codec is therefore:
-#
-#
-#     >>> BitStream(1, rice(3, signed=False))
-#     0010
-#     >>> BitStream(2, rice(3, signed=False))
-#     0100
-#     >>> BitStream(4, rice(3, signed=False))
-#     1000
-#     >>> BitStream(8, rice(3, signed=False))
-#     00010
-#     >>> BitStream(16, rice(3, signed=False))
-#     000110
-#     >>> BitStream(32, rice(3, signed=False))
-#     00011110
-
-# adapted from
-# <http://afni.nimh.nih.gov/pub/dist/src/pkundu/meica.libs/nibabel/casting.py>
-# (didn't find any license information (??))
-def exact_abs(array_like):
-    """A `nump.abs` replacement that "just works" with signed integers.
-
-    >>> import numpy
-    >>> integer = numpy.int16(-2**15)
-    >>> integer
-    -32768
-
-    >>> numpy.abs(integer)
-    -32768
-    >>> exact_abs(integer)
-    32768
-"""
-    scalar = np.isscalar(array_like)
-    array = np.array(array_like, copy=True)
-    dtype_ = array.dtype
-    if dtype_.kind == "i":
-        unsigned_dtype = np.dtype(dtype_.str.replace("i", "u"))
-        out = array.astype(unsigned_dtype)
-        patch = np.array(array < 0)
-        out[patch] = - array[patch]
-        if scalar:
-            out = out[()]
-        return out
-    else: # "u", "O", "f", "c", etc.
-        return np.abs(array)
-
-
-class rice(object):
-    """
-    Golomb-Rice Codec Information Type
-    """
-    def __init__(self, n, **kwargs):
-        """
-Arguments
----------
-
-  - `n`: the number of bits used for fixed-width encoding
-
-  - `signed`: `True` if the integer sign shall be encoded, `False` otherwise. 
-"""
-        self.n = n
-        self.signed = kwargs.get("signed")
-
-    @staticmethod
-    def from_frame(frame, **kwargs):
-        """\
-Return a rice codec info from a sample frame.
- 
-The method performs (quasi-)optimal bit width selection.
-
-Arguments
----------
-
-  - `frame`: a sequence of integers,
-
-  - `signed`: `True` if the integer sign shall be encoded, `False` otherwise. 
-
-**References:**
-["Selecting the Golomb Parameter in Rice Coding"][Golomb] by A. Kiely.
-
-[Golomb]: http://ipnpr.jpl.nasa.gov/progress_report/42-159/159E.pdf
-"""
-        frame = np.array(frame, ndmin=1, copy=False)
-        try:
-            np_settings = np.seterr() #all="ignore") # need some control here.
-            mean_ = np.mean(exact_abs(frame))
-            golden_ratio = 0.5 * (1.0 + np.sqrt(5))
-            if mean_ < golden_ratio:
-                n = 0
-            else:
-                theta = mean_ / (mean_ + 1.0)
-                log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
-                n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
-        finally:
-            np.seterr(**np_settings)
-        return rice(n, signed=kwargs.get("signed"))
-
-    def __repr__(self):
-        return "rice({0}, signed={1})".format(self.n, self.signed)
-
-    __str__ = __repr__
-
-def rice_encoder(r):
-    def _rice_encoder(stream, data):
-        cdef object[:] data_ = np.array(data, ndmin=1, copy=False, dtype=object)
-        for datum in data_:
-            if r.signed:
-                stream.write(datum < 0)
-            datum = abs(datum) #### mmmm, may overflow, right ?. Is that tested ?
-            # yeah, but indirectly in audio.shrink. How can it work ? 
-            remain, fixed = divmod(datum, 2 ** r.n)
-            fixed_bits = []
-            for _ in range(r.n):
-                fixed_bits.insert(0, bool(fixed % 2)) 
-                fixed = fixed >> 1
-            stream.write(fixed_bits, bool)
-            stream.write(remain, unary)  
-    return _rice_encoder
-
-def rice_decoder(r):
-    def _rice_decoder(stream, n=None):
-        scalar = n is None
-        if n is None:
-            n = 1
-        data = []
-        try:
-            snapshot = stream.save()
-            for _ in range(n):
-                if r.signed and stream.read(bool):
-                    sign = -1
-                else:
-                    sign = 1
-                fixed_number = 0
-                for _ in range(r.n):
-                    fixed_number = (fixed_number << 1) + int(stream.read(bool))
-                remain_number = 2 ** r.n * stream.read(unary)
-                data.append(sign * (fixed_number + remain_number))
-        except:
-            stream.restore(snapshot)
-            raise
-        if scalar:
-            data = data[0]
-        return data
-    return _rice_decoder
-
-bitstream.register(rice, reader=rice_decoder, writer=rice_encoder)
-
-# OBSOLETE ---------------------------------------------------------------------
-#
-#def _rice_symbol_encoder(options):
-#    def encoder(stream, symbol):
-#        if options.signed:
-#            stream.write(symbol < 0)
-#        symbol = abs(symbol)
-#        remain, fixed = divmod(symbol, 2 ** options.n)
-#        fixed_bits = []
-#        for _ in range(options.n):
-#            fixed_bits.insert(0, bool(fixed % 2))
-#            fixed = fixed >> 1
-#        stream.write(fixed_bits)
-#        stream.write(remain, unary)
-#    return encoder
-#
-#def _rice_symbol_decoder(options):
-#    def decoder(stream):
-#        if options.signed and stream.read(bool):
-#            sign = -1
-#        else:
-#            sign = 1
-#        fixed_number = 0
-#        n = int(options.n)
-#        for _ in range(n):
-#            fixed_number = (fixed_number << 1) + int(stream.read(bool))
-#        remain_number = 2 ** n * stream.read(unary)
-#        return sign * (fixed_number + remain_number)
-#    return decoder
-#
-#_rice_encoder = lambda r: stream_encoder(_rice_symbol_encoder(r))
-#_rice_decoder = lambda r: stream_decoder(_rice_symbol_decoder(r))
-#bitstream.register(rice, reader=_rice_decoder, writer=_rice_encoder)
-# ------------------------------------------------------------------------------
-
-#
-# Unit Tests
-# ------------------------------------------------------------------------------
-#
-def test_unary_coder():
-    """
-Unary coder Tests:
-
-    >>> stream = bitstream.BitStream()
-    >>> stream.write(0, unary)
-    >>> stream.write(1, unary)
-    >>> stream.write([2, 3, 4, 5, 6], unary)
-    >>> stream
-    0101101110111101111101111110
-
-    >>> stream.read(unary)
-    0
-    >>> stream.read(unary)
-    1
-    >>> stream.read(unary, 2)
-    [2, 3]
-    >>> stream.read(unary, 3)
-    [4, 5, 6]
-    >>> 
-    """
-
-def test_unary_coder_exception():
-   """
-    >>> stream = bitstream.BitStream(8 * [True])
-    >>> stream.read(unary) # doctest: +IGNORE_EXCEPTION_DETAIL
-    Traceback (most recent call last):
-    ...
-    ReadError: ...
-    >>> stream
-    11111111
-"""
-
-def test_rice_coder():
-    """
-Rice coder Tests:
-
-    >>> r2 = rice(2, signed=False)
-    >>> stream = bitstream.BitStream()
-    >>> stream.write(0, r2)
-    >>> stream
-    000
-    >>> stream.write([1,2,3], r2)
-    >>> stream
-    000010100110
-    >>> stream.write([4,5,6], r2)
-    >>> stream
-    000010100110001001101010
-    >>> stream.write([7,8,9], r2)
-    >>> stream
-    00001010011000100110101011100011001110
-
-    >>> stream.read(r2)
-    0
-    >>> stream.read(r2)
-    1
-    >>> stream.read(r2, 3)
-    [2, 3, 4]
-    >>> stream.read(r2, 5)
-    [5, 6, 7, 8, 9]
-    """
-
-
-def test_rice_coder_exception():
-   """
-    >>> stream = bitstream.BitStream(8 * [True])
-    >>> stream.read(rice(4, signed=False)) # doctest: +IGNORE_EXCEPTION_DETAIL
-    Traceback (most recent call last):
-    ...
-    ReadError: ...
-    >>> stream
-    11111111
-"""
-
 
 #def sort_dict(dict_):
 #    """
@@ -574,5 +563,6 @@ def test_rice_coder_exception():
 #    >>> stream.read(huffman_, 4)
 #    [0, 1, 2, 3]
 #    """
+
 
 
