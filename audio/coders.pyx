@@ -13,6 +13,7 @@ cimport numpy as np
 
 # Digital Audio Coding
 import bitstream
+cimport bitstream
 
 #
 # Metadata
@@ -39,7 +40,7 @@ The basic usage is:
     [0, 1, 2, 3]
 """
 
-def unary_encoder(stream, data):
+cpdef unary_encoder(bitstream.BitStream stream, data):
     if np.isscalar(data):
         data = [data]
     for datum in data:
@@ -55,7 +56,7 @@ def unary_encoder(stream, data):
 #            stream.write(True)
 #        stream.write(False)
 
-def unary_decoder(stream, n=None):
+cpdef unary_decoder(bitstream.BitStream stream, n=None):
     scalar = n is None
     if scalar:
         n = 1
@@ -82,24 +83,24 @@ bitstream.register(unary, reader=unary_decoder, writer=unary_encoder)
 # 
 class rice(object):
     """
-    Golomb-Rice Coding Tag
+    Golomb-Rice Coding Tag Type
 
-    The unsigned Golomb-Rice scheme with fixed-width `n` represents a
-    non-negative integer `i` as the code for `i % 2**n` in a fixed-width
-    scheme of width `n`, followed by a unary coding of `i >> n`.
+    The unsigned Golomb-Rice scheme with fixed-width `b` represents a
+    non-negative integer `i` as the code for `i % 2**b` in a fixed-width
+    scheme of width `b`, followed by a unary coding of `i >> b`.
     The signed version of the scheme encodes the sign of the integer `i`
     first, then the integer `abs(i)` with the unsigned scheme.
 
     The basic usage is:
 
     >>> from bitstream import BitStream
-    >>> ur2 = rice(2, signed=False)
+    >>> ur2 = rice(b=2, signed=False)
     >>> stream = BitStream([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ur2)
     >>> stream
     00001010011000100110101011100011001110
     >>> stream.read(ur2, 10)
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    >>> sr2 = rice(2, signed=True)
+    >>> sr2 = rice(b=2, signed=True)
     >>> stream = BitStream([0, -1, 1, -2, 2, -3, 3, -4, 4], sr2)
     >>> stream
     00001010001011000100111001101001000010
@@ -107,17 +108,17 @@ class rice(object):
     [0, -1, 1, -2, 2, -3, 3, -4, 4]
     """
 
-    def __init__(self, n, *args, **kwargs):
+    def __init__(self, b, *args, **kwargs):
         """
         Arguments
         ---------
 
-          - `n`: the number of bits used for fixed-width encoding
+          - `b`: the number of bits used for fixed-width encoding
 
           - `signed`: `True` if the integer sign shall be encoded, 
             `False` otherwise. 
         """
-        self.n = n
+        self.b = b
         # workaround: in Cython, `signed` is a keyword.
         if args:
             self.signed = args[0]
@@ -152,11 +153,11 @@ class rice(object):
             mean_ = np.mean(np.abs(frame))
             golden_ratio = 0.5 * (1.0 + np.sqrt(5))
             if mean_ < golden_ratio:
-                n = 0
+                b = 0
             else:
                 theta = mean_ / (mean_ + 1.0)
                 log_ratio = np.log(golden_ratio - 1.0) / np.log(theta)
-                n = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
+                b = int(np.maximum(0, 1 + np.floor(np.log2(log_ratio))))
         finally:
             np.seterr(**np_settings)
         # Workaround: in Cython, `signed` is a keyword.
@@ -164,24 +165,23 @@ class rice(object):
             _signed = args[0]
         else:
             _signed = kwargs["signed"]
-        return rice(n, signed=_signed)
+        return rice(b=b, signed=_signed)
 
     def __repr__(self):
         return "rice({0}, signed={1})".format(self.n, self.signed)
 
     __str__ = __repr__
 
-
 def rice_encoder(r):
-    def _rice_encoder(stream, data):
+    def _rice_encoder(bitstream.BitStream stream, data):
         cdef object[:] data_ = np.array(data, ndmin=1, copy=False, dtype=object)
         for datum in data_:
             if r.signed:
                 stream.write(datum < 0)
             datum = abs(datum) # exact (datum is a Python int).
-            remain, fixed = divmod(datum, 2 ** r.n)
+            remain, fixed = divmod(datum, 2 ** r.b)
             fixed_bits = []
-            for _ in range(r.n):
+            for _ in range(r.b):
                 fixed_bits.insert(0, bool(fixed % 2)) 
                 fixed = fixed >> 1
             stream.write(fixed_bits, bool)
@@ -189,7 +189,7 @@ def rice_encoder(r):
     return _rice_encoder
 
 def rice_decoder(r):
-    def _rice_decoder(stream, n=None):
+    def _rice_decoder(bitstream.BitStream stream, n=None):
         scalar = n is None
         if n is None:
             n = 1
@@ -202,9 +202,9 @@ def rice_decoder(r):
                 else:
                     sign = 1
                 fixed_number = 0
-                for _ in range(r.n):
+                for _ in range(r.b):
                     fixed_number = (fixed_number << 1) + int(stream.read(bool))
-                remain_number = 2 ** r.n * stream.read(unary)
+                remain_number = 2 ** r.b * stream.read(unary)
                 data.append(sign * (fixed_number + remain_number))
         except:
             stream.restore(snapshot)
@@ -267,7 +267,7 @@ def test_rice_coder():
 Rice coder Tests:
 
     >>> import bitstream
-    >>> r2 = rice(2, signed=False)
+    >>> r2 = rice(b=2, signed=False)
     >>> stream = bitstream.BitStream()
     >>> stream.write(0, r2)
     >>> stream
@@ -296,7 +296,7 @@ def test_rice_coder_exception():
    """
     >>> import bitstream
     >>> stream = bitstream.BitStream(8 * [True])
-    >>> stream.read(rice(4, signed=False)) # doctest: +IGNORE_EXCEPTION_DETAIL
+    >>> stream.read(rice(b=4, signed=False)) # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
     ...
     ReadError: ...
