@@ -168,7 +168,7 @@ class rice(object):
         return rice(b=b, signed=_signed)
 
     def __repr__(self):
-        return "rice({0}, signed={1})".format(self.n, self.signed)
+        return "rice(b={0}, signed={1})".format(self.b, self.signed)
 
     __str__ = __repr__
 
