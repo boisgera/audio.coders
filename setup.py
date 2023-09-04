@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# Python 2.7 Standard Library
-import ConfigParser
+# Python 3 Standard Library
+import configparser
+
 import os
 import os.path
 import shutil
@@ -70,15 +71,15 @@ def trueish(value):
 def import_CYTHON_REST_from_setup_cfg():
     global CYTHON, REST
     if os.path.isfile("setup.cfg"):
-        parser = ConfigParser.ConfigParser()
+        parser = configparser.ConfigParser()
         parser.read("setup.cfg")
         try:
             CYTHON = trueish(parser.get("global", "cython"))
-        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+        except (configparser.NoOptionError, configparser.NoSectionError):
             pass
         try:
             REST = trueish(parser.get("global", "rest"))
-        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+        except (configparser.NoOptionError, configparser.NoSectionError):
             pass
 
 import_CYTHON_REST_from_setup_cfg()
@@ -88,7 +89,7 @@ import_CYTHON_REST_from_setup_cfg()
 # ------------------------------------------------------------------------------
 #
 def make_extension(name):
-    include = dict(include_dirs=[numpy.get_include()])
+    include = dict(include_path=[numpy.get_include()])
     pyx_file = name.replace(".", "/") + ".pyx"
     c_file   = name.replace(".", "/") + ".c"
     if CYTHON:
