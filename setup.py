@@ -115,7 +115,7 @@ info = dict(
   code         = dict(packages=setuptools.find_packages(),
                       ext_modules=make_extension("audio.coders")),
   data         = {},
-  requirements = dict(install_requires="bitstream"),
+  requirements = dict(install_requires="bitstream >= 3.0.1"),
   scripts      = {},
   plugins      = {},
   tests        = dict(test_suite="test.suite"),
